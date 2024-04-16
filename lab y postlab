@@ -1,0 +1,159 @@
+/******************************************************************************
+;Universidad del Valle de Guatemala
+;IE2023: Programacion de Microcontroladores
+;Antirebote.asm
+;Autor; Joao Santos
+;Proyecto Contador 8-Bits
+;Hardware: Atemega328P
+;Creado: 07/04/2024
+;Ultima modificacion: 15/04/2024
+******************************************************************************/
+#define F_CPU 16000000
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <avr/io.h>
+#include <stdint.h>
+#include <stdio.h>
+
+void PINCHANGE(void);
+void LEDS(void);
+void initADC(void);
+void InfoADC(void);
+volatile uint8_t Contador = 0;
+volatile uint8_t DEC = 0;
+volatile uint8_t UNI = 0;
+volatile uint8_t DISP = 0;
+
+const uint8_t tabla_valores[16] = {
+	0x40, 
+	0x79, 
+	0x24, 
+	0x30, 
+	0x19, 
+	0x12, 
+	0x02, 
+	0x78, 
+	0x00, 
+	0x10, 
+	0x08, 
+	0x03, 
+	0x46, 
+	0x21, 
+	0x06, 
+	0x0E
+	};
+
+
+int main(void)
+{
+	cli();
+	// Set del puerto D
+	DDRD = 0xFF;
+	PORTD = 0;
+	UCSR0B = 0;
+	// Set del puerto C
+	DDRC &= ~((1 << PINC4) | (1 << PINC5));
+	PORTC |= (1 << PINC4) | (1 << PINC5);
+	DDRC |= (1 << PINC0) | (1 << PINC1) | (1 << PINC2) | (1 << PINC3);
+	PORTC &= ~(1 << PINC0);
+	PORTC &= ~(1 << PINC1);
+	PORTC &= ~(1 << PINC2);
+	PORTC &= ~(1 << PINC3);
+	// Set del puerto B
+	DDRB = 0xFF;
+	PORTB = 0;
+	
+	PINCHANGE();
+	initADC();
+	
+	sei();
+    while (1){	
+		LEDS();
+		InfoADC();
+    }
+}
+
+void LEDS(void){
+	// Desplegar valores del puerto B a las leds (0 - 3) 
+	PORTB = (PORTB & 0xF0) | (Contador & 0x0F);
+	// Desplegar valores del puerto C a las leds (4 - 7)
+	PORTC = (PORTC & 0xF0) | ((Contador >> 4) & 0x0F);
+}
+
+void PINCHANGE(void){
+	// Activar las interupciones de PC1 (Puerto C)
+	PCICR |= (1 << PCIE1);
+	// Activar las interupciones de PC1 (Pines 4C y 5C)
+	PCMSK1 |= (1 << PCINT12) | (1 << PCINT13);
+}
+
+
+void initADC(void){
+	ADMUX = 0;
+	// Vref = 5V
+	ADMUX |= (1 << REFS0);	// 1
+	ADMUX &= ~(1 << REFS1);	// 0
+	
+	// Justificado a la izquierda
+	ADMUX |= (1 << ADLAR);
+	
+	// Canal 6
+	ADMUX |= (1 << MUX1) | (1 << MUX2);
+	
+	ADCSRA = 0;
+	// Encender el ADC
+	ADCSRA |= (1 << ADEN);
+	
+	// Interrupcion
+	ADCSRA |= (1 << ADIE);
+	
+	// Prescaler de 128 (16M/128 = 125K)
+	ADCSRA |= (1 << ADPS0) | (1 << ADPS1) | (1 << ADPS2);
+}
+
+void InfoADC(void){
+	// Iniciando Secuencia del ADC
+	ADCSRA |= (1 << ADSC);
+	//_delay_ms(100);
+	
+	if (DISP < Contador){
+		PORTD |= (1 << PORTD7);
+	}
+	else {
+		PORTD &= ~(1 << PORTD7);
+	}
+
+	PORTB &= ~(1 << PORTB4);
+	PORTB |= (1 << PORTB5);
+	PORTD = (tabla_valores[UNI]) | (PORTD & 0x80); 
+	_delay_ms(10) ;
+	
+	PORTB &= ~(1 << PORTB5);
+	PORTB |= (1 << PORTB4);
+	PORTD = (tabla_valores[DEC]) | (PORTD & 0x80);
+	_delay_ms(10);
+}
+
+
+ISR(ADC_vect){
+	UNI = ADCH & 0x0F; 
+	DEC = (ADCH & 0xF0) >> 4; 
+	DISP = ADCH; 
+	ADCSRA |= (1 << ADIF);
+}
+
+ISR(PCINT1_vect){
+	// Set de botones
+	uint8_t BotIn = PINC & (1 << PINC4);
+	uint8_t BotDe = PINC & (1 << PINC5);
+
+	// Incremento y decremento
+	if (BotIn == 0){
+		Contador++;
+		}else if(BotDe == 0){
+		Contador--;
+	}
+	
+	// Desactivado de banderas
+	PCIFR |= (1 << PCIF1);
+}
